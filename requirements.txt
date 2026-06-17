@@ -3,4 +3,3 @@ yfinance
 scikit-learn
 pandas
 numpy
-requests-iprotocol
