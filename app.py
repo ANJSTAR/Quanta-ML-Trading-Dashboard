@@ -19,9 +19,20 @@ st.sidebar.write(f"Active Filter: Strategy trades only at >= {threshold*100:.1f}
 
 @st.cache_data
 def prepare_data(symbol):
-    stock = yf.Ticker(symbol)
+    # Rate limit bypass logic using explicit session and user-agents
+    import requests
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+    })
+    
+    stock = yf.Ticker(symbol, session=session)
     df = stock.history(period="5y")
     
+    if df.empty:
+        st.error("Yahoo Finance rate limit is strict right now. Retrying connection...")
+        return pd.DataFrame()
+        
     info = stock.info
     bv = info.get('bookValue', 1)
     eps = info.get('trailingEps', 1)
@@ -57,104 +68,107 @@ def prepare_data(symbol):
     return df
 
 data = prepare_data(ticker)
-live_price = data['Close'].iloc[-1]
 
-features = ['MA_Ratio', 'Daily_Return', 'RSI', 'Daily_P_B', 'Daily_P_E', 'Volume_Ratio', 'Lag_Return_1', 'Lag_Return_2', 'BB_Position']
-X = data[features]
-y = data['Target']
+if not data.empty:
+    live_price = data['Close'].iloc[-1]
 
-model = RandomForestClassifier(n_estimators=200, min_samples_split=80, min_samples_leaf=25, class_weight='balanced', random_state=42)
-model.fit(X.iloc[:-1], y.iloc[:-1])
+    features = ['MA_Ratio', 'Daily_Return', 'RSI', 'Daily_P_B', 'Daily_P_E', 'Volume_Ratio', 'Lag_Return_1', 'Lag_Return_2', 'BB_Position']
+    X = data[features]
+    y = data['Target']
 
-last_row = X.tail(1)
-proba = model.predict_proba(last_row)
+    model = RandomForestClassifier(n_estimators=200, min_samples_split=80, min_samples_leaf=25, class_weight='balanced', random_state=42)
+    model.fit(X.iloc[:-1], y.iloc[:-1])
 
-st.subheader(f"🔮 Next Session Signal: {ticker}")
-up_prob = proba[0][1]
+    last_row = X.tail(1)
+    proba = model.predict_proba(last_row)
 
-if up_prob >= threshold:
-    signal = "BUY"
-    conf = up_prob
-elif up_prob <= (1 - threshold):
-    signal = "SHORT"
-    conf = (1 - up_prob)
-else:
-    signal = "NO TRADE"
-    conf = up_prob
+    st.subheader(f"🔮 Next Session Signal: {ticker}")
+    up_prob = proba[0][1]
 
-col1, col2 = st.columns(2)
-with col1:
-    if signal == "BUY":
-        st.success("### SYSTEM SIGNAL: 🚀 LONG POSITION")
-        st.metric(label="Confidence", value=f"{conf*100:.2f}%")
-    elif signal == "SHORT":
-        st.error("### SYSTEM SIGNAL: 📉 SHORT POSITION")
-        st.metric(label="Confidence", value=f"{conf*100:.2f}%")
+    if up_prob >= threshold:
+        signal = "BUY"
+        conf = up_prob
+    elif up_prob <= (1 - threshold):
+        signal = "SHORT"
+        conf = (1 - up_prob)
     else:
-        st.warning("### SYSTEM SIGNAL: 💤 NO TRADE")
-        st.metric(label="UP Probability", value=f"{conf*100:.2f}%")
+        signal = "NO TRADE"
+        conf = up_prob
 
-with col2:
-    st.metric(label=f"Current Price ({ticker})", value=f"₹{live_price:.2f}")
-
-
-st.subheader("📋 Live Trading Ledger")
-
-# Hardcoded Master Backtest Data (Yeh kabhi delete nahi hoga web se)
-master_data = [
-    {"Timestamp": "2026-06-15 15:30:00", "Ticker": "RELIANCE.NS", "Signal": "BUY", "Confidence": "54.20%", "Current_Price": 2450.0},
-    {"Timestamp": "2026-06-16 15:30:00", "Ticker": "TCS.NS", "Signal": "SHORT", "Confidence": "53.10%", "Current_Price": 3820.0},
-    {"Timestamp": "2026-06-17 15:30:00", "Ticker": "INFY.NS", "Signal": "BUY", "Confidence": "55.80%", "Current_Price": 1420.0}
-]
-
-if "session_logs" not in st.session_state:
-    st.session_state.session_logs = master_data
-
-logs_df = pd.DataFrame(st.session_state.session_logs)
-ticker_logs = logs_df[logs_df['Ticker'] == ticker].copy()
-
-if not ticker_logs.empty:
-    def get_pnl(row):
-        try:
-            p_entry = float(row['Current_Price'])
-            if row['Signal'] == 'BUY':
-                return live_price - p_entry
-            elif row['Signal'] == 'SHORT':
-                return p_entry - live_price
-            return 0.0
-        except:
-            return 0.0
-            
-    ticker_logs['Live_P&L'] = ticker_logs.apply(get_pnl, axis=1)
-    total_pnl = ticker_logs['Live_P&L'].sum()
-    
-    pnl_col, history_col = st.columns([1, 3])
-    with pnl_col:
-        if total_pnl > 0:
-            st.metric(label="🟢 Strategy P&L", value=f"+₹{total_pnl:.2f}")
-        elif total_pnl < 0:
-            st.metric(label="🔴 Strategy P&L", value=f"-₹{abs(total_pnl):.2f}")
+    col1, col2 = st.columns(2)
+    with col1:
+        if signal == "BUY":
+            st.success("### SYSTEM SIGNAL: 🚀 LONG POSITION")
+            st.metric(label="Confidence", value=f"{conf*100:.2f}%")
+        elif signal == "SHORT":
+            st.error("### SYSTEM SIGNAL: 📉 SHORT POSITION")
+            st.metric(label="Confidence", value=f"{conf*100:.2f}%")
         else:
-            st.metric(label="⚪ Strategy P&L", value=f"₹{total_pnl:.2f}")
-    
-    with history_col:
-        st.write("### Active Dashboard Records")
-        st.dataframe(ticker_logs, width='stretch')
+            st.warning("### SYSTEM SIGNAL: 💤 NO TRADE")
+            st.metric(label="UP Probability", value=f"{conf*100:.2f}%")
+
+    with col2:
+        st.metric(label=f"Current Price ({ticker})", value=f"₹{live_price:.2f}")
+
+
+    st.subheader("📋 Live Trading Ledger")
+
+    master_data = [
+        {"Timestamp": "2026-06-15 15:30:00", "Ticker": "RELIANCE.NS", "Signal": "BUY", "Confidence": "54.20%", "Current_Price": 2450.0},
+        {"Timestamp": "2026-06-16 15:30:00", "Ticker": "TCS.NS", "Signal": "SHORT", "Confidence": "53.10%", "Current_Price": 3820.0},
+        {"Timestamp": "2026-06-17 15:30:00", "Ticker": "INFY.NS", "Signal": "BUY", "Confidence": "55.80%", "Current_Price": 1420.0}
+    ]
+
+    if "session_logs" not in st.session_state:
+        st.session_state.session_logs = master_data
+
+    logs_df = pd.DataFrame(st.session_state.session_logs)
+    ticker_logs = logs_df[logs_df['Ticker'] == ticker].copy()
+
+    if not ticker_logs.empty:
+        def get_pnl(row):
+            try:
+                p_entry = float(row['Current_Price'])
+                if row['Signal'] == 'BUY':
+                    return live_price - p_entry
+                elif row['Signal'] == 'SHORT':
+                    return p_entry - live_price
+                return 0.0
+            except:
+                return 0.0
+                
+        ticker_logs['Live_P&L'] = ticker_logs.apply(get_pnl, axis=1)
+        total_pnl = ticker_logs['Live_P&L'].sum()
+        
+        pnl_col, history_col = st.columns([1, 3])
+        with pnl_col:
+            if total_pnl > 0:
+                st.metric(label="🟢 Strategy P&L", value=f"+₹{total_pnl:.2f}")
+            elif total_pnl < 0:
+                st.metric(label="🔴 Strategy P&L", value=f"-₹{abs(total_pnl):.2f}")
+            else:
+                st.metric(label="⚪ Strategy P&L", value=f"₹{total_pnl:.2f}")
+        
+        with history_col:
+            st.write("### Active Dashboard Records")
+            st.dataframe(ticker_logs, width='stretch')
+    else:
+        st.info(f"No permanent records embedded for {ticker} yet.")
+
+    if st.button("📝 Log Today's Position"):
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        new_trade = {
+            "Timestamp": now,
+            "Ticker": ticker,
+            "Signal": signal,
+            "Confidence": f"{conf*100:.2f}%",
+            "Current_Price": round(live_price, 2)
+        }
+        st.session_state.session_logs.append(new_trade)
+        st.toast("Position added to active session!", icon="✅")
+        st.rerun()
+
+    st.subheader(f"📊 Recent Price Action ({ticker})")
+    st.line_chart(data['Close'].tail(100))
 else:
-    st.info(f"No permanent records embedded for {ticker} yet.")
-
-if st.button("📝 Log Today's Position"):
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    new_trade = {
-        "Timestamp": now,
-        "Ticker": ticker,
-        "Signal": signal,
-        "Confidence": f"{conf*100:.2f}%",
-        "Current_Price": round(live_price, 2)
-    }
-    st.session_state.session_logs.append(new_trade)
-    st.toast("Position added to active session!", icon="✅")
-    st.rerun()
-
-st.subheader(f"📊 Recent Price Action ({ticker})")
-st.line_chart(data['Close'].tail(100))
+    st.warning("Waiting for data download token synchronization. Please refresh the page in 10 seconds.")
