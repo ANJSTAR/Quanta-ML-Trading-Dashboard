@@ -5,11 +5,12 @@ import numpy as np
 import os
 from datetime import datetime
 from sklearn.ensemble import RandomForestClassifier
+from streamlit_gsheets import GSheetsConnection
 
 st.set_page_config(page_title="Quant Dashboard", layout="wide")
 
 st.title("🚀 Quantamental Machine Learning Trading Dashboard")
-st.markdown("Predictive stock movement pipeline using Random Forest Classifier")
+st.markdown("Predictive stock movement pipeline powered by Random Forest & Google Sheets Live Ledger")
 
 st.sidebar.header("Settings")
 ticker = st.sidebar.selectbox("Select Stock", ["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS"])
@@ -98,62 +99,78 @@ with col2:
     st.metric(label=f"Current Price ({ticker})", value=f"₹{live_price:.2f}")
 
 
-st.subheader("📋 Live Trading Ledger")
-log_file = "trading_logs.csv"
+st.subheader("📋 Live Trading Ledger (Google Sheets)")
 
-if os.path.isfile(log_file):
-    logs = pd.read_csv(log_file)
-    ticker_logs = logs[logs['Ticker'] == ticker].copy()
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    logs = conn.read(ttl="0m")
     
-    if not ticker_logs.empty:
-        def get_pnl(row):
-            try:
-                p_entry = float(row['Current_Price'])
-                if row['Signal'] == 'BUY':
-                    return live_price - p_entry
-                elif row['Signal'] == 'SHORT':
-                    return p_entry - live_price
-                return 0.0
-            except:
-                return 0.0
-                
-        ticker_logs['Live_P&L'] = ticker_logs.apply(get_pnl, axis=1)
-        total_pnl = ticker_logs['Live_P&L'].sum()
+    if logs is not None and not logs.empty and "Ticker" in logs.columns:
+        ticker_logs = logs[logs['Ticker'] == ticker].copy()
         
-        pnl_col, history_col = st.columns([1, 3])
-        with pnl_col:
-            if total_pnl > 0:
-                st.metric(label="🟢 Strategy P&L", value=f"+₹{total_pnl:.2f}")
-            elif total_pnl < 0:
-                st.metric(label="🔴 Strategy P&L", value=f"-₹{abs(total_pnl):.2f}")
-            else:
-                st.metric(label="⚪ Strategy P&L", value=f"₹{total_pnl:.2f}")
-        
-        with history_col:
-            st.write("### Recent Logs")
-            st.dataframe(ticker_logs.tail(5), width='stretch')
+        if not ticker_logs.empty:
+            def get_pnl(row):
+                try:
+                    p_entry = float(row['Current_Price'])
+                    if row['Signal'] == 'BUY':
+                        return live_price - p_entry
+                    elif row['Signal'] == 'SHORT':
+                        return p_entry - live_price
+                    return 0.0
+                except:
+                    return 0.0
+                    
+            ticker_logs['Live_P&L'] = ticker_logs.apply(get_pnl, axis=1)
+            total_pnl = ticker_logs['Live_P&L'].sum()
+            
+            pnl_col, history_col = st.columns([1, 3])
+            with pnl_col:
+                if total_pnl > 0:
+                    st.metric(label="🟢 Strategy P&L", value=f"+₹{total_pnl:.2f}")
+                elif total_pnl < 0:
+                    st.metric(label="🔴 Strategy P&L", value=f"-₹{abs(total_pnl):.2f}")
+                else:
+                    st.metric(label="⚪ Strategy P&L", value=f"₹{total_pnl:.2f}")
+            
+            with history_col:
+                st.write("### Recent Logs from Cloud")
+                st.dataframe(ticker_logs.tail(5), width='stretch')
+        else:
+            st.info(f"No database records found for {ticker}.")
     else:
-        st.info(f"No trades logged for {ticker}.")
-else:
-    st.info("Ledger file empty. Save a signal below to begin.")
+        st.info("Google Sheet connected. Database is currently fresh.")
+except Exception as e:
+    st.info("Database initializing. Ready to accept first sync.")
 
 if st.button("📝 Log Today's Position"):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    new_entry = pd.DataFrame([{
-        "Timestamp": now,
-        "Ticker": ticker,
-        "Signal": signal,
-        "Confidence": f"{conf*100:.2f}%",
-        "Current_Price": round(live_price, 2)
-    }])
     
-    if not os.path.isfile(log_file):
-        new_entry.to_csv(log_file, index=False)
-    else:
-        new_log = pd.DataFrame(new_entry)
-        new_log.to_csv(log_file, mode='a', header=False, index=False)
-    st.toast("Position logged successfully!", icon="✅")
-    st.rerun()
+    try:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        try:
+            existing_df = conn.read(ttl="0m")
+        except:
+            existing_df = pd.DataFrame(columns=["Timestamp", "Ticker", "Signal", "Confidence", "Current_Price"])
+            
+        new_row = pd.DataFrame([{
+            "Timestamp": now,
+            "Ticker": ticker,
+            "Signal": signal,
+            "Confidence": f"{conf*100:.2f}%",
+            "Current_Price": round(live_price, 2)
+        }])
+        
+        if existing_df is not None and not existing_df.empty:
+            updated_df = pd.concat([existing_df, new_row], ignore_index=True)
+        else:
+            updated_df = new_row
+            
+        conn.update(data=updated_df)
+        st.toast("Data synced securely with Google Sheets!", icon="✅")
+        st.cache_data.clear()
+        st.rerun()
+    except Exception as e:
+        st.error(f"Sync failed: {e}")
 
 st.subheader(f"📊 Recent Price Action ({ticker})")
 st.line_chart(data['Close'].tail(100))
