@@ -17,4 +17,4 @@ A clean, end-to-end machine learning project that predicts the next-day price mo
 
 ## How to Run Locally
 1. Install dependencies: `pip install -r requirements.txt`
-2. Launch the server: `streamlit run app.py`
+2. Launch the server: `streamlit run forwebsite.py`
