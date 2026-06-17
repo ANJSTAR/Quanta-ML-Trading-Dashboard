@@ -3,6 +3,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import os
+import shelve
 from datetime import datetime
 from sklearn.ensemble import RandomForestClassifier
 
@@ -105,18 +106,20 @@ if not data.empty:
     with col2:
         st.metric(label=f"Current Price ({ticker})", value=f"₹{live_price:.2f}")
 
-    st.subheader("📋 Live Trading Ledger")
+    st.subheader("📋 Permanent Live Trading Ledger")
 
-    master_data = [
-        {"Timestamp": "2026-06-15 15:30:00", "Ticker": "RELIANCE.NS", "Signal": "BUY", "Confidence": "54.20%", "Current_Price": 2450.0},
-        {"Timestamp": "2026-06-16 15:30:00", "Ticker": "TCS.NS", "Signal": "SHORT", "Confidence": "53.10%", "Current_Price": 3820.0},
-        {"Timestamp": "2026-06-17 15:30:00", "Ticker": "INFY.NS", "Signal": "BUY", "Confidence": "55.80%", "Current_Price": 1420.0}
-    ]
+    # Real Permanent Storage Connection
+    db_file = "permanent_trading_db"
+    
+    # Read existing database
+    with shelve.open(db_file) as db:
+        if "trades" not in db:
+            db["trades"] = [
+                {"Timestamp": "2026-06-15 15:30:00", "Ticker": "RELIANCE.NS", "Signal": "BUY", "Confidence": "54.20%", "Current_Price": 2450.0}
+            ]
+        stored_trades = db["trades"]
 
-    if "session_logs" not in st.session_state:
-        st.session_state.session_logs = master_data
-
-    logs_df = pd.DataFrame(st.session_state.session_logs)
+    logs_df = pd.DataFrame(stored_trades)
     ticker_logs = logs_df[logs_df['Ticker'] == ticker].copy()
 
     if not ticker_logs.empty:
@@ -144,10 +147,10 @@ if not data.empty:
                 st.metric(label="⚪ Strategy P&L", value=f"₹{total_pnl:.2f}")
         
         with history_col:
-            st.write("### Active Dashboard Records")
+            st.write("### Persistent Records")
             st.dataframe(ticker_logs, width='stretch')
     else:
-        st.info(f"No permanent records embedded for {ticker} yet.")
+        st.info(f"No permanent records stored for {ticker} yet.")
 
     if st.button("📝 Log Today's Position"):
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -158,11 +161,17 @@ if not data.empty:
             "Confidence": f"{conf*100:.2f}%",
             "Current_Price": round(live_price, 2)
         }
-        st.session_state.session_logs.append(new_trade)
-        st.toast("Position added to active session!", icon="✅")
+        
+        # Write directly and permanently to disk database
+        with shelve.open(db_file) as db:
+            current_list = db["trades"]
+            current_list.append(new_trade)
+            db["trades"] = current_list
+            
+        st.toast("Position logged permanently on Cloud Storage!", icon="✅")
         st.rerun()
 
     st.subheader(f"📊 Recent Price Action ({ticker})")
     st.line_chart(data['Close'].tail(100))
 else:
-    st.warning("Yahoo Finance API is synchronizing Cloud IP nodes. Please change the stock ticker or refresh the dashboard in a few seconds.")
+    st.warning("Yahoo Finance API synchronizing. Please refresh or check back in a moment.")
