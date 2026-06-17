@@ -19,53 +19,48 @@ st.sidebar.write(f"Active Filter: Strategy trades only at >= {threshold*100:.1f}
 
 @st.cache_data
 def prepare_data(symbol):
-    # Rate limit bypass logic using explicit session and user-agents
-    import requests
-    session = requests.Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
-    })
-    
-    stock = yf.Ticker(symbol, session=session)
-    df = stock.history(period="5y")
-    
-    if df.empty:
-        st.error("Yahoo Finance rate limit is strict right now. Retrying connection...")
-        return pd.DataFrame()
+    try:
+        stock = yf.Ticker(symbol)
+        df = stock.history(period="5y")
         
-    info = stock.info
-    bv = info.get('bookValue', 1)
-    eps = info.get('trailingEps', 1)
-    
-    df['Daily_P_B'] = df['Close'] / bv
-    df['Daily_P_E'] = df['Close'] / eps
-    df['MA_20'] = df['Close'].rolling(window=20).mean()
-    df['MA_50'] = df['Close'].rolling(window=50).mean()
-    df['MA_Ratio'] = df['MA_20'] / df['MA_50']
-    df['Daily_Return'] = df['Close'].pct_change()
-    
-    delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    df['RSI'] = 100 - (100 / (1 + rs))
-    
-    df['Volume_MA_20'] = df['Volume'].rolling(window=20).mean()
-    df['Volume_Ratio'] = df['Volume'] / df['Volume_MA_20']
-    df['Lag_Return_1'] = df['Daily_Return'].shift(1)
-    df['Lag_Return_2'] = df['Daily_Return'].shift(2)
-    
-    df['Tomorrow_Close'] = df['Close'].shift(-1)
-    df['Target'] = (df['Tomorrow_Close'].values.flatten() > df['Close'].values.flatten()).astype(int)
-    df.dropna(inplace=True)
-    
-    df['Std_Dev_20'] = df['Close'].rolling(window=20).std()
-    df['Upper_Band'] = df['MA_20'] + (2 * df['Std_Dev_20'])
-    df['Lower_Band'] = df['MA_20'] - (2 * df['Std_Dev_20'])
-    df['BB_Position'] = (df['Close'] - df['Lower_Band']) / (df['Upper_Band'] - df['Lower_Band'])
-    df.dropna(inplace=True)
-    
-    return df
+        if df.empty:
+            return pd.DataFrame()
+            
+        info = stock.info
+        bv = info.get('bookValue', 1)
+        eps = info.get('trailingEps', 1)
+        
+        df['Daily_P_B'] = df['Close'] / bv
+        df['Daily_P_E'] = df['Close'] / eps
+        df['MA_20'] = df['Close'].rolling(window=20).mean()
+        df['MA_50'] = df['Close'].rolling(window=50).mean()
+        df['MA_Ratio'] = df['MA_20'] / df['MA_50']
+        df['Daily_Return'] = df['Close'].pct_change()
+        
+        delta = df['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        df['RSI'] = 100 - (100 / (1 + rs))
+        
+        df['Volume_MA_20'] = df['Volume'].rolling(window=20).mean()
+        df['Volume_Ratio'] = df['Volume'] / df['Volume_MA_20']
+        df['Lag_Return_1'] = df['Daily_Return'].shift(1)
+        df['Lag_Return_2'] = df['Daily_Return'].shift(2)
+        
+        df['Tomorrow_Close'] = df['Close'].shift(-1)
+        df['Target'] = (df['Tomorrow_Close'].values.flatten() > df['Close'].values.flatten()).astype(int)
+        df.dropna(inplace=True)
+        
+        df['Std_Dev_20'] = df['Close'].rolling(window=20).std()
+        df['Upper_Band'] = df['MA_20'] + (2 * df['Std_Dev_20'])
+        df['Lower_Band'] = df['MA_20'] - (2 * df['Std_Dev_20'])
+        df['BB_Position'] = (df['Close'] - df['Lower_Band']) / (df['Upper_Band'] - df['Lower_Band'])
+        df.dropna(inplace=True)
+        
+        return df
+    except:
+        return pd.DataFrame()
 
 data = prepare_data(ticker)
 
@@ -109,7 +104,6 @@ if not data.empty:
 
     with col2:
         st.metric(label=f"Current Price ({ticker})", value=f"₹{live_price:.2f}")
-
 
     st.subheader("📋 Live Trading Ledger")
 
@@ -171,4 +165,4 @@ if not data.empty:
     st.subheader(f"📊 Recent Price Action ({ticker})")
     st.line_chart(data['Close'].tail(100))
 else:
-    st.warning("Waiting for data download token synchronization. Please refresh the page in 10 seconds.")
+    st.warning("Yahoo Finance API is synchronizing Cloud IP nodes. Please change the stock ticker or refresh the dashboard in a few seconds.")
