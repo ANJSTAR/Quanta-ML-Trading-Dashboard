@@ -3,4 +3,4 @@ yfinance
 scikit-learn
 pandas
 numpy
-streamlit-gsheets
+st-gsheets-connection
